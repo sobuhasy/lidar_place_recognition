@@ -43,8 +43,8 @@ def _generate_synthetic_dataset(num_scans: int, seed: int):
     for pose in poses:
         points = rng.normal(size =(1024, 3)) + pose[:3] * 0.05
         scans.append(points)
-        poses.append(pose)
-    return scans, np.vstack(poses)
+        # poses.append(pose)
+    return scans, poses
 
 def _compute_descriptors(scans, descriptor: YourDescriptor):
     descriptors = []
