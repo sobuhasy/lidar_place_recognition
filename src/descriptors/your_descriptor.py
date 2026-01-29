@@ -25,7 +25,7 @@ class YourDescriptor(Descriptor):
             raise ValueError("Points array is empty.")
         
         points = np.asarray(points, dtype=float)
-        if points.ndim != 2 or points.shapes[1] < 3:
+        if points.ndim != 2 or points.shape[1] < 3:
             raise ValueError("Points array must be of shape (N, 3+).*")
         
         xyz = points[:, :3]

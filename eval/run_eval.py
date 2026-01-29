@@ -55,19 +55,32 @@ def _compute_descriptors(scans, descriptor: YourDescriptor):
         descriptors.append(descriptor.compute(normalized))
     return np.vstack(descriptors)
 
-def _score_pairs(descriptors, similarity_func):
+def _score_pairs(descriptors, matches):
+    """Compare every pair of descriptors against the ground truth matches."""
+    # Convert list of tuples to a set for fast O(1) lookup
+    match_set = set(matches)
+    
     scores = []
     labels = []
     num = descriptors.shape[0]
+    
     for i in range(num):
         for j in range(num):
             if i == j:
                 continue
-            labels.append(int(ground_truth[i, j]))
+            
+            # Check if this pair (i, j) or (j, i) exists in the ground truth
+            is_match = (i, j) in match_set or (j, i) in match_set
+            labels.append(int(is_match))
+            
+            # Compute similarity
             scores.append(cosine_similarity(descriptors[i], descriptors[j]))
+            
     return np.array(labels), np.array(scores)
 
-def _load_dataset(split, num_scans, seed):
+def _load_dataset(split: str, num_scans: int, seed: int):
+    """Wrapper to load synthetic data for testing."""
+    # We ignore 'split' for now because we are generating fake data
     return _generate_synthetic_dataset(num_scans, seed)
 
 def main():
@@ -84,7 +97,7 @@ def main():
     descriptor = YourDescriptor()
     descriptors = _compute_descriptors(scans, descriptor)
 
-    ground_truth = build_ground_truth(poses, agrs.distance_threshold)
+    ground_truth = build_ground_truth(poses, args.distance_threshold)
     y_true, y_scores = _score_pairs(descriptors, ground_truth)
     y_pred = (y_scores >= args.threshold).astype(int)
 
@@ -108,13 +121,29 @@ def main():
     }
     metrics_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
 
+# --- Plot 1: Precision-Recall Curve ---
     pr_path = PLOTS_DIR / "pr_curve.png"
     plt.figure()
-    plt.plot(recalls, precisions, marker="o")
+    plt.plot(recalls, precisions, marker=".", label="PR Curve")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title("Precision-Recall Curve")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(pr_path)
+    plt.close()
+
+    # --- Plot 2: ROC Curve ---
+    roc_path = PLOTS_DIR / "roc_curve.png"  # <--- DEFINING THE MISSING VARIABLE
+    plt.figure()
+    plt.plot(fprs, tprs, marker=".", color="#FFE5B4", label="ROC")
+    plt.plot([0, 1], [0, 1], "k--", label="Chance")
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
     plt.title("ROC Curve")
     plt.grid(True, alpha=0.3)
+    plt.legend()
     plt.tight_layout()
     plt.savefig(roc_path)
     plt.close()

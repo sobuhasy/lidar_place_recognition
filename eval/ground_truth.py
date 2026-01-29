@@ -1,9 +1,12 @@
-"""Ground truth generation for place matches (TODO)."""
+"""Ground truth generation for place matches."""
+import numpy as np  # <--- Essential import
 
 def extract_position(pose):
     """Return (x, y, z) position tuple from a pose-like object."""
     if pose is None:
         raise ValueError("Pose is None")
+
+    # 1. Handle Dictionary
     if isinstance(pose, dict):
         if "position" in pose:
             pose = pose["position"]
@@ -14,25 +17,31 @@ def extract_position(pose):
             if x is None or y is None:
                 raise ValueError(f"Pose dict missing 'x' or 'y': {pose}")
             return float(x), float(y), float(z)
-        if hasattr(pose, "position"):
-            pose = pose.position
-        if hasattr(pose, "x") and hasattr(pose, "y"):
-            x = pose.x
-            y = pose.y
-            z = getattr(pose, "z", 0.0)
-            return float(x), float(y), float(z)
-        if isinstance(pose, (list, tuple)):
-            if len(pose) < 2:
-                raise ValueError(f"Pose list/tuple too short: {pose}")
-            x = pose[0]
-            y = pose[1]
-            z = pose[2] if len(pose) > 2 else 0.0
-            return float(x), float(y), float(z)
-        raise ValueError(f"Unsupported pose type: {type(pose)}")
-    
+
+    # 2. Handle Object with .position attribute
+    if hasattr(pose, "position"):
+        pose = pose.position
+
+    # 3. Handle Object with .x, .y attributes
+    if hasattr(pose, "x") and hasattr(pose, "y"):
+        x = pose.x
+        y = pose.y
+        z = getattr(pose, "z", 0.0)
+        return float(x), float(y), float(z)
+
+    # 4. Handle List / Tuple / NumPy Array (CRITICAL FIX)
+    if isinstance(pose, (list, tuple, np.ndarray)):
+        if len(pose) < 2:
+            raise ValueError(f"Pose sequence too short: {pose}")
+        x = pose[0]
+        y = pose[1]
+        z = pose[2] if len(pose) > 2 else 0.0
+        return float(x), float(y), float(z)
+
+    raise ValueError(f"Unsupported pose type: {type(pose)}")
 
 def build_ground_truth(poses, distance_threshold):
-    """Generate ground truth matches based on distance or pose rules."""
+    """Generate ground truth matches based on distance."""
     if distance_threshold is None:
         raise ValueError("Distance threshold must be specified")
     if distance_threshold <= 0:
