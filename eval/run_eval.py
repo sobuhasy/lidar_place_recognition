@@ -43,8 +43,8 @@ def _score_query_database(
     for query_idx, query_descriptor in enumerate(query_descriptors):
         query_pose = query_poses[query_idx]
         diffs = database_poses - query_pose
-        diffs_sq = np.sum(diffs ** 2, axis = 1)
-        is_match = dists_sq <= threshold_sq
+        diffs_sq = np.sum(diffs ** 2, axis=1)
+        is_match = diffs_sq <= threshold_sq
         for db_idx, db_descriptor in enumerate(database_descriptors):
             labels.append(int(is_match[db_idx]))
             scores.append(cosine_similarity(query_descriptor, db_descriptor))
