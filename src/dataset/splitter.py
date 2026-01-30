@@ -36,7 +36,7 @@ def align_scans_with_groundtruth(
     matched_scans: List[Path] = []
     matched_poses: List[np.ndarray] = []
     for scan_file in scan_files:
-        timestamp = _timestamp_from_path(scan_file)
+        timestamp = timestamp_from_path(scan_file)
         pose = poses_by_time.get(timestamp)
         if pose is None:
             continue
@@ -80,9 +80,12 @@ def load_nclt_dataset(
         db_stride: int = 10,
         query_stride: int = 1,
         query_offset: int | None = None,
+        max_scans: int | None = None,
 ) -> Tuple[List[Path], List[Path], np.ndarray, np.ndarray]:
     """Load NCLT scans and split into database/query subsets."""
-    scan_files = scan_files[:max_scans]
+    scan_files = get_scan_files(velodyne_dir)
+    if max_scans is not None:
+        scan_files = scan_files[:max_scans]
 
     matched_scans, poses = align_scans_with_groundtruth(scan_files, ground_truth_csv)
     return split_database_query(

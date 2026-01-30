@@ -43,7 +43,7 @@ class YourDescriptor(Descriptor):
         angles = np.arctan2(xy[:, 1], xy[:, 0])
         angles = np.mod(angles + 2 * np.pi, 2 * np.pi)
 
-        ring_size = self.max_radius / self.max_radius
+        ring_size = self.max_radius / self.num_rings
         sector_size = 2 * np.pi / self.num_sectors
         ring_indices = np.floor(radii / ring_size).astype(int)
         sector_indices = np.floor(angles / sector_size).astype(int)
