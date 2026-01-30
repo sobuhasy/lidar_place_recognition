@@ -3,102 +3,95 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-from eval.ground_truth import build_ground_truth
 from eval.metrics import average_precision, pr_curve, precision_recall_f1, roc_curve
 from eval.sweeps import run_threshold_sweep_from_scores
-from src.config import PLOTS_DIR, RESULTS_DIR
-from src.dataset.loader import iter_scans, load_scan
+from src.config import PLOTS_DIR, RAW_DATA, RESULTS_DIR
+from src.dataset.loader import load_scan
 from src.dataset.preprocess import downsample, filter_points, normalize
 from src.descriptors.your_descriptor import YourDescriptor
+from src.dataset.splitter import load_nclt_dataset
 from src.matching.similarity import cosine_similarity
 
-def _load_pose(pose_entry: str, fallback: np.ndarray) -> np.ndarray:
-    if not pose_entry:
-        return fallback
-    tokens = pose_entry.replace(",", " ").split()
-    if len(tokens) >= 2:
-        values = [float(value) for value in tokens[:2]]
-        if len(values) == 2:
-            values.append(0.0)
-        return np.array(values, dtype=float)
-    pose_path = Path(pose_entry)
-    if pose_path.exists():
-        pose_values = np.loadtxt(pose_path)
-        pose_values = np.asarray(pose_values).reshape(-1)
-        if pose_values.size >= 3:
-            return pose_values[:3]
-        if pose_values.size == 2:
-            return np.array([pose_values[0], pose_values[1], 0.0], dtype=float)
-    return fallback
-
-def _generate_synthetic_dataset(num_scans: int, seed: int):
-    rng = np.random.default_rng(seed)
-    poses = np.cumsum(rng.normal(scale = 2.0, size =(num_scans, 3)), axis=0)
-    scans = []
-    for pose in poses:
-        points = rng.normal(size =(1024, 3)) + pose[:3] * 0.05
-        scans.append(points)
-        # poses.append(pose)
-    return scans, poses
-
-def _compute_descriptors(scans, descriptor: YourDescriptor):
+def _compute_descriptors(scan_paths, descriptor: YourDescriptor):
     descriptors = []
-    for points in scans:
+    for scan_path in scan_paths:
+        points = load_scan(str(scan_path))
         filtered = filter_points(points)
         sampled = downsample(filtered)
         normalized = normalize(sampled)
         descriptors.append(descriptor.compute(normalized))
     return np.vstack(descriptors)
 
-def _score_pairs(descriptors, matches):
-    """Compare every pair of descriptors against the ground truth matches."""
-    # Convert list of tuples to a set for fast O(1) lookup
-    match_set = set(matches)
+def _score_query_database(
+        query_descriptors,
+        database_descriptors,
+        query_poses,
+        database_poses,
+        distance_threshold: float,
+        ):
+    """Score query/database descriptor pairs using pose distance as ground truth."""
+    if distance_threshold <= 0:
+        raise ValueError("distance_threshold must be positive.")
     
     scores = []
     labels = []
-    num = descriptors.shape[0]
-    
-    for i in range(num):
-        for j in range(num):
-            if i == j:
-                continue
-            
-            # Check if this pair (i, j) or (j, i) exists in the ground truth
-            is_match = (i, j) in match_set or (j, i) in match_set
-            labels.append(int(is_match))
-            
-            # Compute similarity
-            scores.append(cosine_similarity(descriptors[i], descriptors[j]))
-            
-    return np.array(labels), np.array(scores)
+    threshold_sq = distance_threshold ** 2
+    for query_idx, query_descriptor in enumerate(query_descriptors):
+        query_pose = query_poses[query_idx]
+        diffs = database_poses - query_pose
+        diffs_sq = np.sum(diffs ** 2, axis = 1)
+        is_match = dists_sq <= threshold_sq
+        for db_idx, db_descriptor in enumerate(database_descriptors):
+            labels.append(int(is_match[db_idx]))
+            scores.append(cosine_similarity(query_descriptor, db_descriptor))
 
-def _load_dataset(split: str, num_scans: int, seed: int):
-    """Wrapper to load synthetic data for testing."""
-    # We ignore 'split' for now because we are generating fake data
-    return _generate_synthetic_dataset(num_scans, seed)
+    return np.asarray(labels), np.asarray(scores)
 
 def main():
     """Entry point for evaluation script."""
     parser = argparse.ArgumentParser(description="Run place recognition evaluation.")
     parser.add_argument("--split", default="train", help="Dataset split name.")
     parser.add_argument("--distance-threshold", type=int, default=200)
-    parser.add_argument("--num-scans", type=int, default=200)
-    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument(
+        "--velodyne-dir",
+        type=str,
+        default=str(RAW_DATA/ "velodyne-data" / "velodyne_sync")
+    )
+    parser.add_argument(
+        "--groundtruth-csv",
+        type=str,
+        default=str(RAW_DATA / "groundtruth.csv")
+    )
+    parser.add_argument("--db-stride", type=int, default=10)
+    parser.add_argument("--query-stride", type=int, default=1)
+    parser.add_argument("--query-offset", type=int, default=None)
+    parser.add_argument("--max-scans", type=int, default=None)
     parser.add_argument("--threshold", type=float, default=0.5)
     args = parser.parse_args()
 
-    scans, poses = _load_dataset(args.split, args.num_scans, args.seed)
+    database_scans, query_scans, database_poses, query_poses = load_nclt_dataset(
+        velodyne_dir=args.velodyne_dir,
+        ground_truth_csv=args.groundtruth_csv,
+        db_stride=args.db_stride,
+        query_stride=args.query_stride,
+        query_offset=args.query_offset,
+        max_scans=args.max_scans,
+    )
     descriptor = YourDescriptor()
-    descriptors = _compute_descriptors(scans, descriptor)
+    database_descriptors = _compute_descriptors(database_scans, descriptor)
+    query_descriptors = _compute_descriptors(query_scans, descriptor)
+    y_true, y_scores = _score_query_database(
+        query_descriptors,
+        database_descriptors,
+        query_poses,
+        database_poses,
+        args.distance_threshold,
+    )
 
-    ground_truth = build_ground_truth(poses, args.distance_threshold)
-    y_true, y_scores = _score_pairs(descriptors, ground_truth)
     y_pred = (y_scores >= args.threshold).astype(int)
 
     precision, recall, f1 = precision_recall_f1(y_true, y_pred)
