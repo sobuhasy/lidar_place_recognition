@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 import numpy as np
+import pandas as pd
 
 from src.dataset.loader import get_scan_files, load_ground_truth_csv
 
@@ -25,25 +26,70 @@ def align_scans_with_groundtruth(
         scan_files: List[Path],
         ground_truth_csv: str,
 ) -> Tuple[List[Path], np.ndarray]:
-    """Align scans with ground truth positions based on timestamps."""
-    df = load_ground_truth_csv(ground_truth_csv)
-    timestamp_col, x_col, y_col, z_col = _resolve_pose_columns(df.columns)
-    poses_by_time = {
-        int(row[timestamp_col]): np.array([row[x_col], row[y_col], row[z_col]], dtype=float)
-        for _, row in df.iterrows()
-    }
+    """Align scans with ground truth using Nearest Neighbor search (Fast)."""
+    
+    print(f"Loading Ground Truth from {ground_truth_csv}...")
+    # Read CSV efficiently
+    df = pd.read_csv(ground_truth_csv)
+    
+    # Identify columns
+    cols = [c.lower() for c in df.columns]
+    # NCLT usually has 'utime', 'time', or 'timestamp'
+    # We look for the first column that looks like time
+    if 'utime' in cols:
+        t_col = df.columns[cols.index('utime')]
+    elif 'time' in cols:
+        t_col = df.columns[cols.index('time')]
+    else:
+        t_col = df.columns[0] # Fallback to first column
+        
+    # Ensure sorted by time
+    df = df.sort_values(by=t_col)
+    
+    # Get numpy arrays (Fast access)
+    gt_times = df[t_col].values
+    # Try to find x, y, z columns
+    try:
+        # NCLT CSV usually has explicit x,y,z headers
+        gt_poses = df[['x', 'y', 'z']].values
+    except KeyError:
+        # Fallback: assume columns 1, 2, 3 are x, y, z
+        gt_poses = df.iloc[:, 1:4].values
 
-    matched_scans: List[Path] = []
-    matched_poses: List[np.ndarray] = []
-    for scan_file in scan_files:
-        timestamp = timestamp_from_path(scan_file)
-        pose = poses_by_time.get(timestamp)
-        if pose is None:
-            continue
-        matched_scans.append(scan_file)
-        matched_poses.append(pose)
-
-    return matched_scans, np.vstack(matched_poses) if matched_poses else np.zeros((0, 3))
+    print(f"Aligning {len(scan_files)} scans to {len(gt_times)} GT poses...")
+    
+    scan_times = np.array([int(p.stem) for p in scan_files])
+    
+    # --- MAGIC STEP: SEARCHSORTED (Binary Search) ---
+    # Find the index of the closest GT timestamp for each scan
+    # This is Instant (O(log N)) vs Iterrows (O(N))
+    idxs = np.searchsorted(gt_times, scan_times)
+    idxs = np.clip(idxs, 0, len(gt_times) - 1)
+    
+    # Refine: searchsorted finds the insertion point (right side)
+    # Check if the left neighbor is actually closer
+    left_idxs = np.clip(idxs - 1, 0, len(gt_times) - 1)
+    dist_right = np.abs(gt_times[idxs] - scan_times)
+    dist_left = np.abs(gt_times[left_idxs] - scan_times)
+    
+    # Pick the better neighbor
+    use_left = dist_left < dist_right
+    final_idxs = np.where(use_left, left_idxs, idxs)
+    
+    # FILTER: If the nearest match is too far (e.g., > 100ms), ignore it
+    min_dists = np.minimum(dist_left, dist_right)
+    TOLERANCE_US = 100000 # 100ms tolerance
+    valid_mask = min_dists < TOLERANCE_US
+    
+    matched_scans = np.array(scan_files)[valid_mask].tolist()
+    matched_poses = gt_poses[final_idxs][valid_mask]
+    
+    print(f"Success: Matched {len(matched_scans)} scans.")
+    
+    if len(matched_scans) == 0:
+        raise ValueError("No matches found! Check CSV timestamps vs Filenames.")
+        
+    return matched_scans, matched_poses
 
 def split_database_query(
         scan_files: List[Path],

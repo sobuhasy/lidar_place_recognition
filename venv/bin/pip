@@ -1,4 +1,4 @@
-#!/home/eveyunikaelra/Projects/MyProgrammingProjects/lidar_place_recognition/venv/bin/python3.12
+#!/home/eveyunikaelra/Projects/MyProgrammingProjects/lidar_place_recognition/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys
